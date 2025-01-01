@@ -6,6 +6,9 @@
 const uint8_t LED_PIN_X = 9;
 const uint8_t LED_PIN_R = 10;
 
+// Тайм-аут неактивності (30 секунд)
+const unsigned long CODE_INACTIVITY_TIMEOUT = 5000UL;
+
 // Об'єкти бібліотек
 LightController light(A3);
 MultiDigitDisplay display(2, 3, 4, 5, 6);
@@ -13,7 +16,7 @@ SW6115 sensor;
 
 // Змінні
 int x_r = 0;                       // Поточне значення PWM (без корекції)
-unsigned long lastSwitchTime = 0;  // Час (millis) останньої "справжньої" зміни режиму
+unsigned long lastSwitchTime = 0;  // Час останньої "справжньої" зміни режиму
 bool isCodeActive = true;          // Прапорець активності коду
 int previousMode = -1;             // Зберігаємо попередній режим (неможливе значення)
 
@@ -22,6 +25,7 @@ uint8_t crt3_8(uint8_t val) {
   return ((uint32_t)(val + 1) * (val + 1) * val) >> 16;
 }
 
+// Переводимо значення PWM [0..255] у відсотки [0..100]
 int pwm_to_percent(uint8_t val) {
   return (val * 100) / 255;
 }
@@ -42,86 +46,69 @@ void loop() {
   // Робимо оновлення раз на 10 мс
   static unsigned long lastUpdateTime = 0;
   unsigned long currentMillis = millis();
+  if (currentMillis - lastUpdateTime < 10) {
+    return; // ще не час оновлюватися
+  }
+  lastUpdateTime = currentMillis;
 
-  if (currentMillis - lastUpdateTime >= 10) {
-    lastUpdateTime = currentMillis;
+  // 1. Визначаємо поточний режим
+  int currentMode = light.getMode();
 
-    // Читаємо поточний режим
-    int currentMode = light.getMode();
+  // 2. Перевіряємо зміну режиму
+  if (currentMode != previousMode) {
+    lastSwitchTime = currentMillis;
+    isCodeActive   = true;
+    previousMode   = currentMode;
+  }
 
-    // ------------------ Відстеження справжньої зміни режиму ------------------
-    // Якщо поточний режим відрізняється від попереднього,
-    // вважаємо, що відбулась "справжня" зміна (наприклад, 0 -> 1, 1 -> 2, 2 -> 0 тощо).
-    if (currentMode != previousMode) {
-      // Оновлюємо час, коли режим змінився
-      lastSwitchTime = currentMillis;
-      // Вмикаємо код, бо маємо нову активну зміну
-      isCodeActive = true;
-      // Запам'ятовуємо поточний режим як "попередній" на майбутнє
-      previousMode = currentMode;
+  // 3. Перевіряємо тайм-аут (30 с)
+  if (currentMillis - lastSwitchTime >= CODE_INACTIVITY_TIMEOUT) {
+    isCodeActive = false;
+  }
+
+  // 4. Визначаємо потрібне значення x_r
+  //    (залежить від режиму; активний код чи ні)
+  if (isCodeActive) {
+    switch (currentMode) {
+      case 1:
+        x_r = light.getX();
+        break;
+      case 2:
+        x_r = light.getR();
+        break;
+      default:
+        x_r = 0;
+        break;
     }
+  } else {
+    x_r = 0;
+  }
 
-    // Перевіряємо, чи не спливли 5 секунд від останньої зміни режиму
-    if ((currentMillis - lastSwitchTime) >= 30000UL) {
-      // Якщо так — "відключаємо" код
-      isCodeActive = false;
+  // 5. Обчислюємо кориговане значення PWM
+  uint8_t corrected_pwm = crt3_8(x_r);
+
+  // 6. Відображаємо дані на дисплеї
+  //    Якщо код активний і режим 1 або 2 — показуємо відсотки від PWM
+  if (isCodeActive) {//    Інакше (режим 0 або код неактивний) — показуємо процес із сенсора
+  if (isCodeActive && (currentMode == 1 || currentMode == 2)) {
+    display.displayNumber(pwm_to_percent(corrected_pwm));
+  } else {
+    display.displayNumber(sensor.readFinalProcessPercent());
+  }
+
+  // 7. Керування світлодіодами
+
+    if (currentMode == 1) {
+      analogWrite(LED_PIN_X, corrected_pwm);
+      digitalWrite(LED_PIN_R, LOW);
     }
-    // ------------------------------------------------------------------------
-
-    // -------------------- Налаштування x_r залежно від режиму ----------------
-    // (Виконуємо завжди, або тільки коли активний код — залежить від вимог)
-    // Тут, для прикладу, будемо зчитувати x_r лише якщо код активний:
-    if (isCodeActive) {
-      switch (currentMode) {
-        case 1:
-          x_r = light.getX();    
-          break;
-        case 2:
-          x_r = light.getR();
-          break;
-        default:
-          x_r = 0;
-          break;
-      }
-    } else {
-      // Якщо код неактивний — вимикаємо
-      x_r = 0;
-    }
-    // ------------------------------------------------------------------------
-
-    // ------------------ Вивід на дисплей та керування світлодіодами ------------------
-    if (isCodeActive) {
-      // Рахуємо скоригований PWM
-      uint8_t corrected_pwm = crt3_8(x_r);
-
-      // --- Відображення на дисплеї ---
-      if (currentMode == 1 || currentMode == 2) {
-        // Показуємо % від PWM
-        display.displayNumber(pwm_to_percent(corrected_pwm));
-      } else {
-        // Якщо режим 0 або будь-який інший
-        uint8_t processPercent = sensor.readFinalProcessPercent();
-        display.displayNumber(processPercent);
-      }
-
-      // --- Керування LED ---
-      if (currentMode == 1) {
-        analogWrite(LED_PIN_X, corrected_pwm);
-        digitalWrite(LED_PIN_R, LOW);
-      }
-      else if (currentMode == 2) {
-        analogWrite(LED_PIN_R, corrected_pwm);
-        digitalWrite(LED_PIN_X, LOW);
-      }
-      else {
-        // Режим 0
-        digitalWrite(LED_PIN_X, LOW);
-        digitalWrite(LED_PIN_R, LOW);
-      }
+    else if (currentMode == 2) {
+      analogWrite(LED_PIN_R, corrected_pwm);
+      digitalWrite(LED_PIN_X, LOW);
     }
     else {
-      
+      digitalWrite(LED_PIN_X, LOW);
+      digitalWrite(LED_PIN_R, LOW);
     }
-    // --------------------------------------------------------------------------------
   }
 }
