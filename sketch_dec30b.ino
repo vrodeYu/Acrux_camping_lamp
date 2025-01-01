@@ -41,19 +41,9 @@ void loop() {
 
   // Таймер для оновлення значень раз на 10 мс
   static unsigned long lastUpdateTime = 0;
-  static bool screenOn = true; // Чи ввімкнений екран
   unsigned long currentMillis = millis();
   
-  // Перевірка, чи екран активний
-  if (currentMillis - light.getLastPressTime() > 60000 && screenOn) {
-    // Вимикаємо екран, якщо кнопки не натискали 1 хвилину
-    screenOn = false;
-    display.resetPins(); // Вимкнення дисплея
-    digitalWrite(LED_PIN_X, LOW);
-    digitalWrite(LED_PIN_R, LOW);
-  }
-
-  if (currentMillis - lastUpdateTime >= 10 && screenOn) {
+  if (currentMillis - lastUpdateTime >= 10) {
     lastUpdateTime = currentMillis;
     
     // Отримання поточного режиму один раз
