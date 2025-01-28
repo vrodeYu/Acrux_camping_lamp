@@ -1,0 +1,34 @@
+#include "ButtonHandler.h"
+
+uint8_t buttonPins[] = {2, 3};
+ButtonHandler buttons(buttonPins, 2);
+int control =0;
+void handleShortPress(uint8_t buttonIndex) {
+
+    control=buttonIndex+3;
+    
+}
+void handleDoublePress(uint8_t buttonIndex) {
+  
+    control=buttonIndex+5;
+    
+}
+void handleLongPress(uint8_t buttonIndex) {
+    
+    control=buttonIndex+7;
+    
+}
+void handleReleaseAfterHold(uint8_t buttonIndex) {
+    
+    control=buttonIndex+9;
+    
+}
+
+void setup() {
+    Serial.begin(9600);
+}
+
+void loop() {
+    buttons.update(handleShortPress, handleLongPress, handleDoublePress,handleReleaseAfterHold);
+    Serial.print(control );
+}
